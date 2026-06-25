@@ -1,5 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Prisma schema file,
+// more about Prisma schema: https://pris.ly/d/prisma-schema
 
 // Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
@@ -12,4 +12,84 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String               @id @default(uuid())
+  email               String               @unique
+  name                String
+  passwordHash        String?              @map("password_hash")
+  externalAuthId      String?              @unique @map("external_auth_id")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  profile             UserProfile?
+  activities          Activity[]
+  signatures          ActivitySignature[]  @relation("SignedByUser")
+  progressPreference  ProgressPreference?
+
+  @@map("users")
+}
+
+model UserProfile {
+  userId               String   @id @map("user_id")
+  aircraftType         String?  @map("aircraft_type")
+  categories           String[] @default([])
+  isSupervisor         Boolean  @default(false) @map("is_supervisor")
+  supervisorCategories String[] @default([]) @map("supervisor_categories")
+  supervisorId         String?  @map("supervisor_id")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model Activity {
+  id               String              @id @default(uuid())
+  userId           String              @map("user_id")
+  date             DateTime
+  aircraftType     String              @map("aircraft_type")
+  categories       String[]            @default([])
+  activity         String
+  taskTypes        String[]            @default([]) @map("task_types")
+  materialGroups   String[]            @default([]) @map("material_groups")
+  timeSpentMinutes Int                 @map("time_spent_minutes")
+  workOrder        String?             @map("work_order")
+  notes            String[]            @default([])
+  isHangarDuty     Boolean             @default(false) @map("is_hangar_duty")
+  certIds          String[]            @default([]) @map("cert_ids")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+  deletedAt        DateTime?           @map("deleted_at")
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signatures       ActivitySignature[]
+
+  @@index([userId, date])
+  @@index([deletedAt])
+  @@map("activities")
+}
+
+model ActivitySignature {
+  id               String    @id @default(uuid())
+  activityId       String    @map("activity_id")
+  signedByUserId   String?   @map("signed_by_user_id")
+  supervisorName   String?   @map("supervisor_name")
+  supervisorId     String?   @map("supervisor_id")
+  signedAt         DateTime  @map("signed_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  activity         Activity  @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  signedByUser     User?     @relation("SignedByUser", fields: [signedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([activityId])
+  @@index([signedByUserId])
+  @@map("activity_signatures")
+}
+
+model ProgressPreference {
+  userId         String   @id @map("user_id")
+  pathSelections Json     @default("{}") @map("path_selections")
+  startDates     Json     @default("{}") @map("start_dates")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("progress_preferences")
 }
