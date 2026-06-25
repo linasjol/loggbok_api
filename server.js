@@ -2,10 +2,12 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "crypto";
+import { PrismaClient } from "@prisma/client";
 
 dotenv.config();
 
 const app = express();
+const prisma = new PrismaClient();
 
 app.use(cors());
 app.use(express.json());
@@ -18,11 +20,23 @@ const PORT = process.env.PORT || 3000;
 let entries = [];
 
 // Test endpoint
-app.get("/api/health", (req, res) => {
-  res.json({
-    status: "ok",
-    message: "Logbook API is working"
-  });
+app.get("/api/health", async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+
+    res.json({
+      status: "ok",
+      database: "ok",
+      message: "Logbook API is working"
+    });
+  } catch (error) {
+    console.error("Health check failed", error);
+    res.status(503).json({
+      status: "error",
+      database: "unavailable",
+      message: "Logbook API cannot reach the database"
+    });
+  }
 });
 
 // Get all logbook entries
@@ -68,4 +82,14 @@ app.get("/api/entries/:id", (req, res) => {
 // Start the server
 app.listen(PORT, () => {
   console.log(`Logbook API is running on http://localhost:${PORT}`);
+});
+
+process.on("SIGINT", async () => {
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  await prisma.$disconnect();
+  process.exit(0);
 });
