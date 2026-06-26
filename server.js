@@ -31,6 +31,40 @@ function stringArray(value) {
     .filter(Boolean);
 }
 
+function isPlainObject(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
+}
+
+function stringMap(value) {
+  if (!isPlainObject(value)) return null;
+
+  const result = {};
+  for (const [key, mapValue] of Object.entries(value)) {
+    const cleanKey = key.trim();
+    if (!cleanKey || typeof mapValue !== "string" || !mapValue.trim()) {
+      return null;
+    }
+    result[cleanKey] = mapValue.trim();
+  }
+
+  return result;
+}
+
+function dateStringMap(value) {
+  const result = stringMap(value);
+  if (result === null) return null;
+
+  for (const date of Object.values(result)) {
+    if (Number.isNaN(new Date(date).getTime())) return null;
+  }
+
+  return result;
+}
+
 async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
   const key = await scrypt(password, salt, 64);
@@ -383,6 +417,76 @@ app.get("/api/me", authenticate, (req, res) => {
   res.json({
     user: publicUser(req.user)
   });
+});
+
+app.get("/api/progress-preferences", authenticate, async (req, res) => {
+  try {
+    const preferences = await prisma.progressPreference.findUnique({
+      where: {
+        userId: req.user.id
+      }
+    });
+
+    res.json({
+      progressPreferences: {
+        pathSelections: preferences?.pathSelections ?? {},
+        startDates: preferences?.startDates ?? {},
+        updatedAt: preferences?.updatedAt ?? null
+      }
+    });
+  } catch (error) {
+    console.error("Get progress preferences failed", error);
+    res.status(500).json({
+      error: "could not load progress preferences"
+    });
+  }
+});
+
+app.put("/api/progress-preferences", authenticate, async (req, res) => {
+  const pathSelections = stringMap(req.body.pathSelections ?? {});
+  const startDates = dateStringMap(req.body.startDates ?? {});
+
+  if (pathSelections === null) {
+    return res.status(400).json({
+      error: "pathSelections must be an object of string values"
+    });
+  }
+
+  if (startDates === null) {
+    return res.status(400).json({
+      error: "startDates must be an object of ISO date string values"
+    });
+  }
+
+  try {
+    const preferences = await prisma.progressPreference.upsert({
+      where: {
+        userId: req.user.id
+      },
+      create: {
+        userId: req.user.id,
+        pathSelections,
+        startDates
+      },
+      update: {
+        pathSelections,
+        startDates
+      }
+    });
+
+    res.json({
+      progressPreferences: {
+        pathSelections: preferences.pathSelections,
+        startDates: preferences.startDates,
+        updatedAt: preferences.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error("Save progress preferences failed", error);
+    res.status(500).json({
+      error: "could not save progress preferences"
+    });
+  }
 });
 
 app.get("/api/activities", authenticate, async (req, res) => {
