@@ -69,6 +69,54 @@ function createToken(user) {
   );
 }
 
+async function authenticate(req, res, next) {
+  const authHeader = req.get("authorization") ?? "";
+  const [scheme, token] = authHeader.split(" ");
+
+  if (scheme !== "Bearer" || !token) {
+    return res.status(401).json({
+      error: "missing bearer token"
+    });
+  }
+
+  if (!JWT_SECRET) {
+    return res.status(500).json({
+      error: "JWT_SECRET is not configured"
+    });
+  }
+
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (!payload?.sub) {
+      return res.status(401).json({
+        error: "invalid token"
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: {
+        id: payload.sub
+      },
+      include: {
+        profile: true
+      }
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        error: "invalid token"
+      });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      error: "invalid token"
+    });
+  }
+}
+
 function publicUser(user) {
   return {
     id: user.id,
@@ -221,6 +269,12 @@ app.post("/api/auth/login", async (req, res) => {
       error: "could not log in"
     });
   }
+});
+
+app.get("/api/me", authenticate, (req, res) => {
+  res.json({
+    user: publicUser(req.user)
+  });
 });
 
 // Get all logbook entries
