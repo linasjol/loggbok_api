@@ -169,6 +169,71 @@ function parseTimeSpentMinutes(value) {
   return value;
 }
 
+function activityUpdateData(body) {
+  const data = {};
+
+  if (Object.hasOwn(body, "date")) {
+    const date = parseActivityDate(body.date);
+    if (!date) return { error: "date must be a valid ISO date string" };
+    data.date = date;
+  }
+
+  if (Object.hasOwn(body, "aircraftType")) {
+    if (typeof body.aircraftType !== "string" || !body.aircraftType.trim()) {
+      return { error: "aircraftType must not be empty" };
+    }
+    data.aircraftType = body.aircraftType.trim();
+  }
+
+  if (Object.hasOwn(body, "activity")) {
+    if (typeof body.activity !== "string" || !body.activity.trim()) {
+      return { error: "activity must not be empty" };
+    }
+    data.activity = body.activity.trim();
+  }
+
+  if (Object.hasOwn(body, "timeSpentMinutes")) {
+    const minutes = parseTimeSpentMinutes(body.timeSpentMinutes);
+    if (minutes === null) {
+      return { error: "timeSpentMinutes must be a non-negative integer" };
+    }
+    data.timeSpentMinutes = minutes;
+  }
+
+  if (Object.hasOwn(body, "categories")) {
+    data.categories = stringArray(body.categories);
+  }
+
+  if (Object.hasOwn(body, "taskTypes")) {
+    data.taskTypes = stringArray(body.taskTypes);
+  }
+
+  if (Object.hasOwn(body, "materialGroups")) {
+    data.materialGroups = stringArray(body.materialGroups);
+  }
+
+  if (Object.hasOwn(body, "workOrder")) {
+    data.workOrder =
+      typeof body.workOrder === "string" && body.workOrder.trim()
+        ? body.workOrder.trim()
+        : null;
+  }
+
+  if (Object.hasOwn(body, "notes")) {
+    data.notes = stringArray(body.notes);
+  }
+
+  if (Object.hasOwn(body, "isHangarDuty")) {
+    data.isHangarDuty = Boolean(body.isHangarDuty);
+  }
+
+  if (Object.hasOwn(body, "certIds")) {
+    data.certIds = stringArray(body.certIds);
+  }
+
+  return { data };
+}
+
 // Temporary in-memory "database".
 // It disappears when the server restarts.
 // Later, we will replace this with a real database.
@@ -398,6 +463,109 @@ app.post("/api/activities", authenticate, async (req, res) => {
     console.error("Create activity failed", error);
     res.status(500).json({
       error: "could not create activity"
+    });
+  }
+});
+
+app.get("/api/activities/:id", authenticate, async (req, res) => {
+  try {
+    const activity = await prisma.activity.findFirst({
+      where: {
+        id: req.params.id,
+        userId: req.user.id,
+        deletedAt: null
+      }
+    });
+
+    if (!activity) {
+      return res.status(404).json({
+        error: "activity not found"
+      });
+    }
+
+    res.json({
+      activity: publicActivity(activity)
+    });
+  } catch (error) {
+    console.error("Get activity failed", error);
+    res.status(500).json({
+      error: "could not load activity"
+    });
+  }
+});
+
+app.put("/api/activities/:id", authenticate, async (req, res) => {
+  const { data, error } = activityUpdateData(req.body);
+
+  if (error) {
+    return res.status(400).json({ error });
+  }
+
+  try {
+    const existing = await prisma.activity.findFirst({
+      where: {
+        id: req.params.id,
+        userId: req.user.id,
+        deletedAt: null
+      }
+    });
+
+    if (!existing) {
+      return res.status(404).json({
+        error: "activity not found"
+      });
+    }
+
+    const updated = await prisma.activity.update({
+      where: {
+        id: existing.id
+      },
+      data
+    });
+
+    res.json({
+      activity: publicActivity(updated)
+    });
+  } catch (error) {
+    console.error("Update activity failed", error);
+    res.status(500).json({
+      error: "could not update activity"
+    });
+  }
+});
+
+app.delete("/api/activities/:id", authenticate, async (req, res) => {
+  try {
+    const existing = await prisma.activity.findFirst({
+      where: {
+        id: req.params.id,
+        userId: req.user.id,
+        deletedAt: null
+      }
+    });
+
+    if (!existing) {
+      return res.status(404).json({
+        error: "activity not found"
+      });
+    }
+
+    const deleted = await prisma.activity.update({
+      where: {
+        id: existing.id
+      },
+      data: {
+        deletedAt: new Date()
+      }
+    });
+
+    res.json({
+      activity: publicActivity(deleted)
+    });
+  } catch (error) {
+    console.error("Delete activity failed", error);
+    res.status(500).json({
+      error: "could not delete activity"
     });
   }
 });
