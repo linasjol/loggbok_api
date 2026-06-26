@@ -137,6 +137,18 @@ function publicUser(user) {
   };
 }
 
+function publicSignature(signature) {
+  return {
+    id: signature.id,
+    activityId: signature.activityId,
+    signedByUserId: signature.signedByUserId,
+    supervisorName: signature.supervisorName,
+    supervisorId: signature.supervisorId,
+    signedAt: signature.signedAt,
+    createdAt: signature.createdAt
+  };
+}
+
 function publicActivity(activity) {
   return {
     id: activity.id,
@@ -151,6 +163,10 @@ function publicActivity(activity) {
     notes: activity.notes,
     isHangarDuty: activity.isHangarDuty,
     certIds: activity.certIds,
+    signatures: Array.isArray(activity.signatures)
+      ? activity.signatures.map(publicSignature)
+      : [],
+    isSigned: Array.isArray(activity.signatures) && activity.signatures.length > 0,
     createdAt: activity.createdAt,
     updatedAt: activity.updatedAt,
     deletedAt: activity.deletedAt
@@ -381,6 +397,13 @@ app.get("/api/activities", authenticate, async (req, res) => {
         userId: req.user.id,
         deletedAt: null
       },
+      include: {
+        signatures: {
+          orderBy: {
+            signedAt: "desc"
+          }
+        }
+      },
       orderBy: [
         {
           date: "desc"
@@ -453,6 +476,9 @@ app.post("/api/activities", authenticate, async (req, res) => {
         notes: stringArray(notes),
         isHangarDuty: Boolean(isHangarDuty),
         certIds: stringArray(certIds)
+      },
+      include: {
+        signatures: true
       }
     });
 
@@ -474,6 +500,13 @@ app.get("/api/activities/:id", authenticate, async (req, res) => {
         id: req.params.id,
         userId: req.user.id,
         deletedAt: null
+      },
+      include: {
+        signatures: {
+          orderBy: {
+            signedAt: "desc"
+          }
+        }
       }
     });
 
@@ -520,7 +553,14 @@ app.put("/api/activities/:id", authenticate, async (req, res) => {
       where: {
         id: existing.id
       },
-      data
+      data,
+      include: {
+        signatures: {
+          orderBy: {
+            signedAt: "desc"
+          }
+        }
+      }
     });
 
     res.json({
@@ -556,6 +596,13 @@ app.delete("/api/activities/:id", authenticate, async (req, res) => {
       },
       data: {
         deletedAt: new Date()
+      },
+      include: {
+        signatures: {
+          orderBy: {
+            signedAt: "desc"
+          }
+        }
       }
     });
 
@@ -566,6 +613,56 @@ app.delete("/api/activities/:id", authenticate, async (req, res) => {
     console.error("Delete activity failed", error);
     res.status(500).json({
       error: "could not delete activity"
+    });
+  }
+});
+
+app.post("/api/activities/:id/signature", authenticate, async (req, res) => {
+  const profile = req.user.profile;
+
+  if (!profile?.isSupervisor) {
+    return res.status(403).json({
+      error: "only supervisors can sign activities"
+    });
+  }
+
+  try {
+    const activity = await prisma.activity.findFirst({
+      where: {
+        id: req.params.id,
+        deletedAt: null
+      }
+    });
+
+    if (!activity) {
+      return res.status(404).json({
+        error: "activity not found"
+      });
+    }
+
+    if (activity.userId === req.user.id) {
+      return res.status(400).json({
+        error: "supervisors cannot sign their own activities"
+      });
+    }
+
+    const signature = await prisma.activitySignature.create({
+      data: {
+        activityId: activity.id,
+        signedByUserId: req.user.id,
+        supervisorName: req.user.name,
+        supervisorId: profile.supervisorId,
+        signedAt: new Date()
+      }
+    });
+
+    res.status(201).json({
+      signature: publicSignature(signature)
+    });
+  } catch (error) {
+    console.error("Sign activity failed", error);
+    res.status(500).json({
+      error: "could not sign activity"
     });
   }
 });
