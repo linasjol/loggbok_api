@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import { promisify } from "util";
 import { PrismaClient } from "@prisma/client";
 
@@ -15,6 +16,7 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET;
 
 function normalizeEmail(email) {
   return typeof email === "string" ? email.trim().toLowerCase() : "";
@@ -34,6 +36,37 @@ async function hashPassword(password) {
   const key = await scrypt(password, salt, 64);
 
   return `scrypt:${salt}:${key.toString("hex")}`;
+}
+
+async function verifyPassword(password, passwordHash) {
+  if (typeof password !== "string" || typeof passwordHash !== "string") {
+    return false;
+  }
+
+  const [algorithm, salt, storedKey] = passwordHash.split(":");
+  if (algorithm !== "scrypt" || !salt || !storedKey) return false;
+
+  const key = await scrypt(password, salt, 64);
+  const storedBuffer = Buffer.from(storedKey, "hex");
+
+  if (storedBuffer.length !== key.length) return false;
+
+  return crypto.timingSafeEqual(storedBuffer, key);
+}
+
+function createToken(user) {
+  if (!JWT_SECRET) {
+    throw new Error("JWT_SECRET is not configured");
+  }
+
+  return jwt.sign(
+    {
+      sub: user.id,
+      email: user.email
+    },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
 }
 
 function publicUser(user) {
@@ -148,6 +181,44 @@ app.post("/api/auth/register", async (req, res) => {
     console.error("Register failed", error);
     res.status(500).json({
       error: "could not create user"
+    });
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  const { email, password } = req.body;
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail || typeof password !== "string") {
+    return res.status(400).json({
+      error: "email and password are required"
+    });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: {
+        email: normalizedEmail
+      },
+      include: {
+        profile: true
+      }
+    });
+
+    if (!user || !(await verifyPassword(password, user.passwordHash))) {
+      return res.status(401).json({
+        error: "invalid email or password"
+      });
+    }
+
+    res.json({
+      token: createToken(user),
+      user: publicUser(user)
+    });
+  } catch (error) {
+    console.error("Login failed", error);
+    res.status(500).json({
+      error: "could not log in"
     });
   }
 });
