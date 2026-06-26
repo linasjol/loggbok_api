@@ -419,6 +419,77 @@ app.get("/api/me", authenticate, (req, res) => {
   });
 });
 
+app.put("/api/me/profile", authenticate, async (req, res) => {
+  const {
+    name,
+    aircraftType,
+    categories,
+    isSupervisor,
+    supervisorCategories,
+    supervisorId
+  } = req.body;
+
+  const trimmedName = typeof name === "string" ? name.trim() : req.user.name;
+  if (!trimmedName) {
+    return res.status(400).json({
+      error: "name must not be empty"
+    });
+  }
+
+  try {
+    const user = await prisma.user.update({
+      where: {
+        id: req.user.id
+      },
+      data: {
+        name: trimmedName,
+        profile: {
+          upsert: {
+            create: {
+              aircraftType:
+                typeof aircraftType === "string" && aircraftType.trim()
+                  ? aircraftType.trim()
+                  : null,
+              categories: stringArray(categories),
+              isSupervisor: Boolean(isSupervisor),
+              supervisorCategories: stringArray(supervisorCategories),
+              supervisorId:
+                typeof supervisorId === "string" && supervisorId.trim()
+                  ? supervisorId.trim()
+                  : null
+            },
+            update: {
+              aircraftType:
+                typeof aircraftType === "string" && aircraftType.trim()
+                  ? aircraftType.trim()
+                  : null,
+              categories: stringArray(categories),
+              isSupervisor: Boolean(isSupervisor),
+              supervisorCategories: stringArray(supervisorCategories),
+              supervisorId:
+                typeof supervisorId === "string" && supervisorId.trim()
+                  ? supervisorId.trim()
+                  : null
+            }
+          }
+        }
+      },
+      include: {
+        profile: true
+      }
+    });
+
+    res.json({
+      user: publicUser(user)
+    });
+  } catch (error) {
+    console.error("Update profile failed", error);
+    res.status(500).json({
+      error: "could not update profile"
+    });
+  }
+});
+
 app.get("/api/progress-preferences", authenticate, async (req, res) => {
   try {
     const preferences = await prisma.progressPreference.findUnique({
