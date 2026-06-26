@@ -137,6 +137,38 @@ function publicUser(user) {
   };
 }
 
+function publicActivity(activity) {
+  return {
+    id: activity.id,
+    date: activity.date,
+    aircraftType: activity.aircraftType,
+    categories: activity.categories,
+    activity: activity.activity,
+    taskTypes: activity.taskTypes,
+    materialGroups: activity.materialGroups,
+    timeSpentMinutes: activity.timeSpentMinutes,
+    workOrder: activity.workOrder,
+    notes: activity.notes,
+    isHangarDuty: activity.isHangarDuty,
+    certIds: activity.certIds,
+    createdAt: activity.createdAt,
+    updatedAt: activity.updatedAt,
+    deletedAt: activity.deletedAt
+  };
+}
+
+function parseActivityDate(value) {
+  if (typeof value !== "string") return null;
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseTimeSpentMinutes(value) {
+  if (!Number.isInteger(value) || value < 0) return null;
+  return value;
+}
+
 // Temporary in-memory "database".
 // It disappears when the server restarts.
 // Later, we will replace this with a real database.
@@ -275,6 +307,99 @@ app.get("/api/me", authenticate, (req, res) => {
   res.json({
     user: publicUser(req.user)
   });
+});
+
+app.get("/api/activities", authenticate, async (req, res) => {
+  try {
+    const activities = await prisma.activity.findMany({
+      where: {
+        userId: req.user.id,
+        deletedAt: null
+      },
+      orderBy: [
+        {
+          date: "desc"
+        },
+        {
+          createdAt: "desc"
+        }
+      ]
+    });
+
+    res.json({
+      activities: activities.map(publicActivity)
+    });
+  } catch (error) {
+    console.error("Get activities failed", error);
+    res.status(500).json({
+      error: "could not load activities"
+    });
+  }
+});
+
+app.post("/api/activities", authenticate, async (req, res) => {
+  const {
+    date,
+    aircraftType,
+    categories,
+    activity,
+    taskTypes,
+    materialGroups,
+    timeSpentMinutes,
+    workOrder,
+    notes,
+    isHangarDuty,
+    certIds
+  } = req.body;
+
+  const parsedDate = parseActivityDate(date);
+  const parsedMinutes = parseTimeSpentMinutes(timeSpentMinutes);
+  const trimmedAircraftType =
+    typeof aircraftType === "string" ? aircraftType.trim() : "";
+  const trimmedActivity = typeof activity === "string" ? activity.trim() : "";
+
+  if (!parsedDate || !trimmedAircraftType || !trimmedActivity) {
+    return res.status(400).json({
+      error: "date, aircraftType and activity are required"
+    });
+  }
+
+  if (parsedMinutes === null) {
+    return res.status(400).json({
+      error: "timeSpentMinutes must be a non-negative integer"
+    });
+  }
+
+  try {
+    const created = await prisma.activity.create({
+      data: {
+        userId: req.user.id,
+        date: parsedDate,
+        aircraftType: trimmedAircraftType,
+        categories: stringArray(categories),
+        activity: trimmedActivity,
+        taskTypes: stringArray(taskTypes),
+        materialGroups: stringArray(materialGroups),
+        timeSpentMinutes: parsedMinutes,
+        workOrder:
+          typeof workOrder === "string" && workOrder.trim()
+            ? workOrder.trim()
+            : null,
+        notes: stringArray(notes),
+        isHangarDuty: Boolean(isHangarDuty),
+        certIds: stringArray(certIds)
+      }
+    });
+
+    res.status(201).json({
+      activity: publicActivity(created)
+    });
+  } catch (error) {
+    console.error("Create activity failed", error);
+    res.status(500).json({
+      error: "could not create activity"
+    });
+  }
 });
 
 // Get all logbook entries
