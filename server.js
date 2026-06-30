@@ -65,6 +65,52 @@ function dateStringMap(value) {
   return result;
 }
 
+function cleanString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeComparable(value) {
+  return cleanString(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function hasCaseInsensitiveOverlap(left, right) {
+  const normalizedRight = new Set(
+    stringArray(right).map((value) => value.toLowerCase())
+  );
+
+  return stringArray(left).some((value) =>
+    normalizedRight.has(value.toLowerCase())
+  );
+}
+
+function parseSupervisorQr(value) {
+  if (!isPlainObject(value)) return null;
+
+  const supervisorId = cleanString(value.supervisorId ?? value.fmid ?? value.id)
+    .toUpperCase();
+  const supervisorName = cleanString(
+    value.supervisorName ?? value.name ?? value.email
+  );
+
+  if (!/^[A-Z]{6}\d{2}$/.test(supervisorId) || !supervisorName) {
+    return null;
+  }
+
+  const signedAt = cleanString(value.signedAt ?? value.scannedAt);
+  const parsedSignedAt = signedAt ? new Date(signedAt) : new Date();
+
+  return {
+    supervisorId,
+    supervisorName,
+    categories: stringArray(value.categories),
+    aircraftTypes: stringArray(value.aircraftTypes),
+    certIds: stringArray(value.certIds),
+    signedAt: Number.isNaN(parsedSignedAt.getTime())
+      ? new Date()
+      : parsedSignedAt
+  };
+}
+
 async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
   const key = await scrypt(password, salt, 64);
@@ -789,12 +835,7 @@ app.delete("/api/activities/:id", authenticate, async (req, res) => {
 
 app.post("/api/activities/:id/signature", authenticate, async (req, res) => {
   const profile = req.user.profile;
-
-  if (!profile?.isSupervisor) {
-    return res.status(403).json({
-      error: "only supervisors can sign activities"
-    });
-  }
+  const scannedSupervisor = parseSupervisorQr(req.body.supervisor);
 
   try {
     const activity = await prisma.activity.findFirst({
@@ -810,20 +851,77 @@ app.post("/api/activities/:id/signature", authenticate, async (req, res) => {
       });
     }
 
-    if (activity.userId === req.user.id) {
-      return res.status(400).json({
-        error: "supervisors cannot sign their own activities"
-      });
-    }
+    let signatureData;
 
-    const signature = await prisma.activitySignature.create({
-      data: {
+    if (scannedSupervisor) {
+      if (activity.userId !== req.user.id) {
+        return res.status(403).json({
+          error: "only the activity owner can attach a scanned signature"
+        });
+      }
+
+      if (
+        !hasCaseInsensitiveOverlap(
+          activity.categories,
+          scannedSupervisor.categories
+        )
+      ) {
+        return res.status(403).json({
+          error: "supervisor is not approved for this category"
+        });
+      }
+
+      const activityAircraft = normalizeComparable(activity.aircraftType);
+      const aircraftMatches = scannedSupervisor.aircraftTypes
+        .map(normalizeComparable)
+        .some((aircraftType) => aircraftType === activityAircraft);
+
+      if (!activityAircraft || !aircraftMatches) {
+        return res.status(403).json({
+          error: "supervisor is not approved for this aircraft type"
+        });
+      }
+
+      if (
+        activity.certIds.length > 0 &&
+        !hasCaseInsensitiveOverlap(activity.certIds, scannedSupervisor.certIds)
+      ) {
+        return res.status(403).json({
+          error: "supervisor is missing the required certificate"
+        });
+      }
+
+      signatureData = {
+        activityId: activity.id,
+        signedByUserId: null,
+        supervisorName: scannedSupervisor.supervisorName,
+        supervisorId: scannedSupervisor.supervisorId,
+        signedAt: scannedSupervisor.signedAt
+      };
+    } else {
+      if (!profile?.isSupervisor) {
+        return res.status(403).json({
+          error: "only supervisors can sign activities"
+        });
+      }
+
+      if (activity.userId === req.user.id) {
+        return res.status(400).json({
+          error: "supervisors cannot sign their own activities"
+        });
+      }
+
+      signatureData = {
         activityId: activity.id,
         signedByUserId: req.user.id,
         supervisorName: req.user.name,
         supervisorId: profile.supervisorId,
         signedAt: new Date()
-      }
+      };
+    }
+
+    const signature = await prisma.activitySignature.create({
+      data: signatureData
     });
 
     res.status(201).json({
